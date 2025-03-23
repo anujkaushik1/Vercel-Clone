@@ -1,2 +1,5 @@
 build-server/node_modules
 build-server/.env
+s3-reverse-proxy/node_modules
+s3-reverse-proxy/.env
+test/

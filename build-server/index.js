@@ -1,10 +1,21 @@
-const { exec } = require("child_process");
-const path = require("path");
-const fs = require("fs");
-const { PutObjectCommand, S3Client } = require("@aws-sdk/client-s3");
-const mime = require("mime-types");
+import { exec } from "child_process";
+import path from "path";
+import fs from "fs";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import mime from "mime-types";
+import { limitFunction } from "p-limit";
+import dotenv from "dotenv";
+import { fileURLToPath } from "url";
 
-require("dotenv").config();
+
+dotenv.config();
+
+const PROJECT_ID = process.env.PROJECT_ID;
+const BUILD_DIR = 'dist';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 
 const s3Client = new S3Client({
   credentials: {
@@ -14,7 +25,10 @@ const s3Client = new S3Client({
   region: process.env.AWS_REGION,
 });
 
-const PROJECT_ID = process.env.PROJECT_ID;
+const limitedUploadFunction = limitFunction((file) => {
+  return uploadFile(file);
+}, {concurrency: 4});
+
 
 function getAllFiles(_path) {
   try {
@@ -39,7 +53,7 @@ function getAllFiles(_path) {
 
 async function uploadFile(file) {
   try {
-    const relativePath = file.split("/build/")[1] || file;
+    const relativePath = file.split(`/${BUILD_DIR}/`)[1] || file;
 
     const command = new PutObjectCommand({
       Bucket: "vercel-main",
@@ -49,7 +63,7 @@ async function uploadFile(file) {
     });
 
     await s3Client.send(command);
-    console.log("completed");
+    console.log("uploaded: ", file);
   } catch (error) {
     console.log("error: ", error);
 
@@ -60,19 +74,23 @@ async function uploadFile(file) {
 async function main() {
   console.log("Executing script");
   const outputDirPath = path.join(__dirname, "output");
-  const process = exec(
-    `cd ${outputDirPath} && npm install --legacy-peer-deps  && npm run build`
-  );
+  const process = exec(`cd ${outputDirPath} && npm install && npm run build`);
+
+  // const process = exec(
+  //   `cd ${outputDirPath}`
+  // );
 
   process.stdout.on("data", (logs) => console.log(logs.toString()));
-  process.stderr.on("data", (data) => console.error("Error:", data.toString()));
+  process.stderr.on("data", (data) =>
+    console.error("Error KAUSHIK:", data.toString())
+  );
   process.on("error", (error) =>
     console.error("Execution Error:", error.message)
   );
 
   process.on("close", async () => {
     console.log("Build Complete");
-    const distFolderPath = path.join(outputDirPath, "build");
+    const distFolderPath = path.join(outputDirPath, BUILD_DIR)
 
     const files = getAllFiles(distFolderPath);
     if (files instanceof Error) {
@@ -81,7 +99,7 @@ async function main() {
 
     const s3FileSendPromises = [];
     for (const file of files) {
-      s3FileSendPromises.push(uploadFile(file));
+      s3FileSendPromises.push(limitedUploadFunction(file));
     }
 
     await Promise.allSettled(s3FileSendPromises);
