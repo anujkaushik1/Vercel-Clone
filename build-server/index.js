@@ -6,16 +6,17 @@ import mime from "mime-types";
 import { limitFunction } from "p-limit";
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
-
+import Redis from "ioredis";
 
 dotenv.config();
 
 const PROJECT_ID = process.env.PROJECT_ID;
-const BUILD_DIR = 'dist';
+const BUILD_DIR = "dist";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const publisher = new Redis(process.env.REDIS_URL);
 
 const s3Client = new S3Client({
   credentials: {
@@ -25,10 +26,21 @@ const s3Client = new S3Client({
   region: process.env.AWS_REGION,
 });
 
-const limitedUploadFunction = limitFunction((file) => {
-  return uploadFile(file);
-}, {concurrency: 4});
+const limitedUploadFunction = limitFunction(
+  async(file) => {
+    return uploadFile(file);
+  },
+  { concurrency: 3 }
+);
 
+async function publishLog(log) {
+  try {
+    await publisher.publish(`logs_${PROJECT_ID}`, JSON.stringify({ log }));
+    console.log("Log published successfully:", log);
+  } catch (error) {
+    console.error("Failed to publish log:", error.message);
+  }
+}
 
 function getAllFiles(_path) {
   try {
@@ -64,15 +76,16 @@ async function uploadFile(file) {
 
     await s3Client.send(command);
     console.log("uploaded: ", file);
+    publishLog(`uploaded: ${file}`);
   } catch (error) {
-    console.log("error: ", error);
-
+    publishLog(`upload error ${error.message}`);
     throw error;
   }
 }
 
 async function main() {
   console.log("Executing script");
+  publishLog("Executing script");
   const outputDirPath = path.join(__dirname, "output");
   const process = exec(`cd ${outputDirPath} && npm install && npm run build`);
 
@@ -80,17 +93,23 @@ async function main() {
   //   `cd ${outputDirPath}`
   // );
 
-  process.stdout.on("data", (logs) => console.log(logs.toString()));
-  process.stderr.on("data", (data) =>
-    console.error("Error KAUSHIK:", data.toString())
-  );
-  process.on("error", (error) =>
-    console.error("Execution Error:", error.message)
-  );
+  process.stdout.on("data", (logs) => {
+    console.log(logs.toString());
+    publishLog(logs.toString());
+  });
+  process.stderr.on("data", (data) => {
+    console.error("Error", data.toString());
+    publishLog(data.toString());
+  });
+  process.on("error", (error) => {
+    console.error("Execution Error:", error.message);
+    publishLog(error.message);
+  });
 
   process.on("close", async () => {
     console.log("Build Complete");
-    const distFolderPath = path.join(outputDirPath, BUILD_DIR)
+    publishLog("Build Complete");
+    const distFolderPath = path.join(outputDirPath, BUILD_DIR);
 
     const files = getAllFiles(distFolderPath);
     if (files instanceof Error) {
@@ -103,6 +122,11 @@ async function main() {
     }
 
     await Promise.allSettled(s3FileSendPromises);
+
+    console.log("All files uploaded Successfully: ", PROJECT_ID);
+    publishLog(`All files uploaded Successfully: , ${PROJECT_ID}`);
+
+    publisher.disconnect();
   });
 }
 

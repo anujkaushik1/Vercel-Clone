@@ -23,5 +23,5 @@ proxy.on("proxyReq", (proxyReq, req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Reverse proxy running: ${PORT}`);
 });
