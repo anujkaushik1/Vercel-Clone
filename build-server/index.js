@@ -33,13 +33,8 @@ const limitedUploadFunction = limitFunction(
   { concurrency: 3 }
 );
 
-async function publishLog(log) {
-  try {
-    await publisher.publish(`logs_${PROJECT_ID}`, JSON.stringify({ log }));
-    console.log("Log published successfully:", log);
-  } catch (error) {
-    console.error("Failed to publish log:", error.message);
-  }
+function publishLog(log) {
+  publisher.publish(`logs_${PROJECT_ID}`, JSON.stringify({ log }));
 }
 
 function getAllFiles(_path) {
